@@ -1,0 +1,46 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.9', '3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install test dependencies
+        run: pip install pytest
+      - name: Run the test suite
+        run: pytest -q
+      - name: Build the bundled example end to end
+        run: |
+          python constructor.py examples/domain.pddl examples/problem.pddl
+          python - <<'PY'
+          import pickle
+          with open('transitions.pickle', 'rb') as handle:
+              transitions, initial_state = pickle.load(handle)
+          assert len(transitions) == 9, len(transitions)
+          assert sum(len(e) for e in transitions.values()) == 33
+          assert initial_state in transitions
+          print('example builds to', len(transitions), 'states')
+          PY
+
+  javascript-port:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check the browser port agrees with the Python implementation
+        run: node docs/assets/verify.js

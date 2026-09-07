@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDDL Parser — PDDL to deterministic transition systems</title>
+<meta name="description" content="A Python tool that turns PDDL domain and problem files into deterministic transition systems, with an in-browser demo. Built for MulVAL attack-graph analysis, planning and reinforcement learning.">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23b4501e'/%3E%3Cg fill='none' stroke='white' stroke-width='2'%3E%3Ccircle cx='9' cy='9' r='3'/%3E%3Ccircle cx='23' cy='16' r='3'/%3E%3Ccircle cx='9' cy='23' r='3'/%3E%3Cpath d='M12 10.5l8 4M12 21.5l8-4'/%3E%3C/g%3E%3C/svg%3E">
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <p class="eyebrow">PDDL → transition system</p>
+    <h1>PDDL Parser</h1>
+    <p class="tagline">
+      A small Python tool that reads a PDDL domain and problem and enumerates the
+      reachable state space as a deterministic transition system — a labelled graph
+      you can feed to a planner, an MDP solver, or an attack-graph analysis.
+      Everything below runs in your browser on a JavaScript port of the same code.
+    </p>
+    <div class="links">
+      <a class="btn primary" href="#demo">Try it in the browser</a>
+      <a class="btn" href="https://github.com/leelening/pddl_parser">GitHub repository</a>
+      <a class="btn" href="#install">Install</a>
+      <a class="btn" href="#fixes">What was fixed</a>
+    </div>
+  </div>
+</header>
+
+<nav class="toc" aria-label="Sections">
+  <div class="wrap">
+    <ul>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#demo">Interactive demo</a></li>
+      <li><a href="#install">Install</a></li>
+      <li><a href="#usage">Usage</a></li>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#format">Output format</a></li>
+      <li><a href="#fixes">Fixed bugs</a></li>
+      <li><a href="#mulval">MulVAL</a></li>
+      <li><a href="#limits">Limitations</a></li>
+    </ul>
+  </div>
+</nav>
+
+<!-- ------------------------------------------------------------ overview -->
+<section id="overview">
+  <div class="wrap">
+    <h2>Overview</h2>
+    <p class="lede">
+      Classical planning describes a problem declaratively: a set of predicates, a set of
+      actions with preconditions and effects, an initial state and a goal. This tool takes
+      that description and produces the object a graph algorithm actually wants — every
+      reachable state, and every action that leads from one state to another.
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3>Parse</h3>
+        <p>Reads STRIPS-style PDDL with <code>:typing</code> and <code>:negative-preconditions</code>: predicates, typed parameters, conjunctive preconditions and add/delete effects.</p>
+      </div>
+      <div class="card">
+        <h3>Ground</h3>
+        <p>Instantiates every lifted action over the objects of its declared types, so the search operates on fully ground actions.</p>
+      </div>
+      <div class="card">
+        <h3>Explore</h3>
+        <p>Breadth-first search from the initial state, recording every applicable ground action at every reachable state.</p>
+      </div>
+      <div class="card">
+        <h3>Export</h3>
+        <p>Pickles the state-indexed transition table so downstream tools — planners, MDP solvers, attack-graph analysis — can load it directly.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- demo -->
+<section id="demo">
+  <div class="wrap">
+    <h2>Interactive demo</h2>
+    <p class="lede">
+      Edit either file and press <strong>Build transition system</strong>. This runs
+      <a href="https://github.com/leelening/pddl_parser/blob/master/docs/assets/pddl.js">a JavaScript port</a>
+      of the Python parser entirely in your browser — nothing is uploaded. The port is
+      checked against the Python implementation and produces identical graphs on every
+      example here.
+    </p>
+
+    <div class="demo-bar">
+      <label for="example">Example</label>
+      <select id="example" aria-label="Choose an example"></select>
+      <button class="btn primary" id="build" type="button">Build transition system</button>
+    </div>
+    <p id="example-note" class="lede" style="font-size:14px;margin-bottom:20px"></p>
+
+    <div class="editors">
+      <div class="editor">
+        <label for="domain">domain.pddl</label>
+        <textarea id="domain" spellcheck="false" aria-label="Domain PDDL"></textarea>
+      </div>
+      <div class="editor">
+        <label for="problem">problem.pddl</label>
+        <textarea id="problem" spellcheck="false" aria-label="Problem PDDL"></textarea>
+      </div>
+    </div>
+
+    <div id="error" class="notice err" role="alert" hidden></div>
+    <div id="warn" class="notice warn" role="status" hidden></div>
+    <div id="stats" class="stats" hidden></div>
+
+    <div class="graph-wrap" id="graph-wrap" hidden>
+      <div class="graph-head">
+        <span>Reachable state space — click a state for its facts</span>
+        <span class="legend"><span class="swatch" style="background:var(--accent-soft);border-color:var(--accent)"></span> initial</span>
+        <span class="legend"><span class="swatch" style="background:var(--ok-soft);border-color:var(--ok)"></span> goal satisfied</span>
+        <span class="legend">columns = BFS depth</span>
+      </div>
+      <div class="graph-scroll">
+        <svg class="graph" id="graph" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Transition system graph"></svg>
+      </div>
+    </div>
+
+    <div class="detail" id="detail"></div>
+
+    <p style="color:var(--text-faint);font-size:13px;margin-top:20px">
+      States are labelled by how they differ from the initial state, since planning states
+      share a large common core. Self-loops are drawn as a small arc: an action whose
+      effects already hold does not change the state, but it is still an applicable action
+      and belongs in the graph.
+    </p>
+  </div>
+</section>
+
+<!-- ------------------------------------------------------------- install -->
+<section id="install">
+  <div class="wrap">
+    <h2>Install</h2>
+    <p class="lede">Python 3.7 or newer. The tool itself has no third-party dependencies; <code>pytest</code> is only needed to run the test suite.</p>
+<pre><code>git clone https://github.com/leelening/pddl_parser.git
+cd pddl_parser
+
+# optional, to run the tests
+pip install pytest
+pytest</code></pre>
+  </div>
+</section>
+
+<!-- --------------------------------------------------------------- usage -->
+<section id="usage">
+  <div class="wrap">
+    <h2>Usage</h2>
+
+    <h3>Command line</h3>
+<pre><code>python constructor.py examples/domain.pddl examples/problem.pddl</code></pre>
+<pre><code>The total number of states: 		 9
+
+Time: 		 0.0007s
+
+The total number of transitions: 		 33</code></pre>
+<p>The transition system is written to <code>transitions.pickle</code> in the working directory.</p>
+
+    <h3>As a library</h3>
+<pre><code>from constructor import Constructor
+
+transitions, initial_state = Constructor().construct(
+    'examples/domain.pddl', 'examples/problem.pddl')
+
+# every state reachable from the initial one
+for state, edges in transitions.items():
+    for action_label, successor in edges.items():
+        ...</code></pre>
+
+    <h3>Inspecting a parse</h3>
+<pre><code>python PDDL.py examples/domain.pddl examples/problem.pddl</code></pre>
+    <p>Prints the token tree, every parsed action with its preconditions and effects, and the problem's objects, initial state and goals — the fastest way to see how a file was understood.</p>
+
+    <h3>Reloading the pickle</h3>
+<pre><code>import pickle
+
+with open('transitions.pickle', 'rb') as handle:
+    transitions, initial_state = pickle.load(handle)
+
+print(len(transitions), 'states')
+print(transitions[initial_state])   # {action_label: successor_state}</code></pre>
+  </div>
+</section>
+
+<!-- ----------------------------------------------------------------- how -->
+<section id="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <p class="lede">Three files, each one stage of the pipeline.</p>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>File</th><th>Role</th></tr></thead>
+        <tbody>
+          <tr><td><code>PDDL.py</code></td><td>Tokenizes the s-expressions and turns them into a domain (predicates, typed actions) and a problem (objects, initial state, goals). PDDL is case-insensitive, so all identifiers are folded to lower case.</td></tr>
+          <tr><td><code>action.py</code></td><td>Holds one action. <code>groundify()</code> instantiates a lifted action over every combination of objects of its parameter types; <code>label()</code> in <code>constructor.py</code> gives each grounding a unique key.</td></tr>
+          <tr><td><code>constructor.py</code></td><td>Grounds every action, then breadth-first searches from the initial state, recording each applicable action and the state it leads to.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>The state update</h3>
+    <p>A STRIPS action is applicable in a state when all of its positive preconditions hold and none of its negative preconditions do. Applying it deletes its delete-effects and then adds its add-effects — deletion first, so a fact that is both deleted and added survives.</p>
+<pre><code>def apply(self, state, positive, negative):
+    new_state = []
+    for i in state:
+        if i not in negative:
+            new_state.append(i)
+    for i in positive:
+        if i not in new_state:
+            new_state.append(i)
+    return new_state</code></pre>
+    <p>A state is a <em>set</em> of ground facts, so <code>convert()</code> sorts and deduplicates the facts before the result is used as a dictionary key. Skipping that step is what made the same state appear under several different keys — see <a href="#fixes">the fixes below</a>.</p>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- format -->
+<section id="format">
+  <div class="wrap">
+    <h2>Output format</h2>
+    <p class="lede">The pickle holds <code>[transitions, initial_state]</code>.</p>
+    <div class="scroll-x">
+      <table>
+        <thead><tr><th>Value</th><th>Type</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>state</code></td><td><code>tuple[tuple[str, ...], ...]</code></td><td>A sorted, deduplicated tuple of ground facts; each fact is the predicate name followed by its arguments, e.g. <code>('at', 'ana', 'p1')</code>.</td></tr>
+          <tr><td><code>transitions</code></td><td><code>dict[state, dict[str, state]]</code></td><td>For every reachable state, a mapping from action label to successor state.</td></tr>
+          <tr><td>action label</td><td><code>str</code></td><td><code>name</code> for a parameterless action, otherwise <code>name(arg1,arg2)</code> — unique per grounding.</td></tr>
+          <tr><td><code>initial_state</code></td><td><code>state</code></td><td>The problem's <code>:init</code>, canonicalized. Always a key of <code>transitions</code>.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="margin-top:16px">Every successor is itself a key of <code>transitions</code>, so the structure is a closed graph: you can walk it without bounds checks.</p>
+  </div>
+</section>
+
+<!-- ---------------------------------------------------------------- fixes -->
+<section id="fixes">
+  <div class="wrap">
+    <h2>Fixed bugs</h2>
+    <p class="lede">
+      The bundled attack-graph example used to report 19 states and 18 transitions.
+      The reachable state space actually has 9 states and 33 transitions. Six defects
+      accounted for the difference; a regression test pins down each one.
+    </p>
+
+    <div class="fix">
+      <h3><span class="tag">state space</span> States were keyed by insertion order</h3>
+      <p>
+        A state is a set of facts, but it was stored as a list and keyed by that list's order.
+        Reaching <code>{a, b}</code> by adding <code>a</code> then <code>b</code> produced a
+        different key from reaching it the other way round, so a single state was explored
+        and recorded several times over — the reported state count grew combinatorially with
+        the number of independent action orderings. Sorting the facts makes the key canonical.
+      </p>
+      <div class="beforeafter">
+        <div><div class="h">before</div><pre><code>def convert(list):
+    return tuple(i[0] for i in list)</code></pre></div>
+        <div><div class="h">after</div><pre><code>def convert(state):
+    return tuple(sorted(set(
+        tuple(i) for i in state)))</code></pre></div>
+      </div>
+    </div>
+
+    <div class="fix">
+      <h3><span class="tag">missing edges</span> Transitions into known states were dropped</h3>
+      <p>
+        The edge was only recorded inside the branch that discovered a <em>new</em> state, so
+        every transition leading back into an already-visited state vanished — including every
+        self-loop. Goal states came out with no outgoing edges at all, which makes the result
+        useless as a transition system for an MDP or a model checker. The edge is now recorded
+        for every applicable action, independently of whether the successor is new.
+      </p>
+      <div class="beforeafter">
+        <div><div class="h">before</div><pre><code>if new_state not in visited:
+    visited.append(new_state)
+    need_visit.append(new_state)
+    transitions[...][act.name] = ...</code></pre></div>
+        <div><div class="h">after</div><pre><code>transitions[key][label(act)] = new_key
+if new_key not in visited:
+    visited.add(new_key)
+    need_visit.append(new_state)</code></pre></div>
+      </div>
+    </div>
+
+    <div class="fix">
+      <h3><span class="tag">collision</span> Groundings of one action overwrote each other</h3>
+      <p>
+        Edges were keyed by <code>act.name</code>, which every grounding of a lifted action
+        shares. With <code>move(ana,p1,p2)</code> and <code>move(ana,p1,p3)</code> both
+        applicable, only one survived in the dictionary — the graph silently lost the other
+        branch. Edges are now keyed by <code>label(act)</code>, which includes the arguments.
+      </p>
+    </div>
+
+    <div class="fix">
+      <h3><span class="tag">crash</span> A goal true in the initial state raised ValueError</h3>
+      <p>
+        <code>construct()</code> returned a bare <code>[]</code> in that case, while every caller
+        unpacks two values — including its own <code>__main__</code> block. Worse, the early
+        return threw away the rest of the reachable state space: the goal is not a search
+        cutoff, and a goal state reached later is expanded like any other. Both are fixed —
+        try the <em>Goal already true initially</em> example above.
+      </p>
+    </div>
+
+    <div class="fix">
+      <h3><span class="tag">state space</span> Fact arguments were discarded</h3>
+      <p>
+        Each fact was reduced to its predicate name, so <code>at(ana,p1)</code> and
+        <code>at(ana,p2)</code> collapsed into the same fact <code>at</code>. That is harmless
+        for a MulVAL attack graph, where every predicate takes the same single object, but it
+        silently corrupts any domain with more than one object per predicate. Facts now keep
+        their arguments.
+      </p>
+    </div>
+
+    <div class="fix">
+      <h3><span class="tag">state space</span> A repeated <code>:init</code> fact created a phantom state</h3>
+      <p>
+        <code>convert()</code> sorted the facts but never deduplicated them, while
+        <code>apply()</code> never emits a repeated fact. So
+        <code>(:init (at ana p1) (at ana p1))</code> left the initial state under a key no
+        action could ever produce again — an extra node hanging off the front of the graph.
+      </p>
+    </div>
+
+    <div class="fix">
+      <h3><span class="tag">robustness</span> Smaller fixes</h3>
+      <p>
+        <code>Action</code> defined <code>__eq__</code> without <code>__hash__</code>, which makes
+        a class unhashable in Python 3;
+        <code>replace()</code> substituted parameters one at a time, re-scanning tokens it had
+        already substituted, and <code>groundify()</code> raised a bare <code>KeyError</code>
+        for a parameter type the problem declares no objects for;
+        <code>:objects a - pos b - pos</code> kept only the last group of a repeated type;
+        <code>parse_problem()</code> failed with an <code>AttributeError</code> when called before
+        <code>parse_domain()</code>;
+        the module shadowed the <code>str</code> and <code>list</code> builtins;
+        <code>visited</code> was a list, making membership checks linear in the size of the
+        state space; and the README advertised a <code>pandas</code> dependency the code never
+        imported.
+      </p>
+    </div>
+
+    <h3 style="margin-top:28px">Regression tests</h3>
+<pre><code>pytest -q
+................................                                [100%]
+32 passed</code></pre>
+    <p>Each defect above has a test named <code>test_bug_*</code> in <code>tests/test_parser.py</code>, so a regression fails loudly rather than quietly changing a state count.</p>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- mulval -->
+<section id="mulval">
+  <div class="wrap">
+    <h2>MulVAL integration</h2>
+    <p class="lede">The tool was written for attack-graph analysis, where the "planner" is an attacker and the plan is an exploit chain.</p>
+    <ol>
+      <li>Run <a href="http://people.cs.ksu.edu/~xou/mulval/">MulVAL</a> over a network description to get an attack graph.</li>
+      <li>Convert it with <a href="https://github.com/leelening/MulVAL-to-pddl">MulVAL-to-PDDL</a>, which emits the <code>domain.pddl</code> / <code>problem.pddl</code> pair.</li>
+      <li>Build the transition system with this tool.</li>
+      <li>Analyse the graph: shortest exploit chain, reachability of a privileged state, or an MDP over attacker actions.</li>
+    </ol>
+    <p>In that encoding each MulVAL derivation rule becomes an action, each network fact a predicate, and the goal is the compromise you are testing for. The bundled example is exactly that: two hosts, an OpenSSH and an OpenSSL vulnerability, and a goal of code execution on both.</p>
+  </div>
+</section>
+
+<!-- -------------------------------------------------------------- limits -->
+<section id="limits">
+  <div class="wrap">
+    <h2>Limitations</h2>
+    <ul>
+      <li>STRIPS only: <code>:strips</code>, <code>:typing</code> and <code>:negative-preconditions</code>. No numeric fluents, conditional effects, durative actions, disjunctive preconditions, quantifiers or derived predicates.</li>
+      <li>Type hierarchies are not resolved — a parameter of type <code>t</code> is grounded over the objects declared exactly as <code>t</code>.</li>
+      <li>The state space is enumerated exhaustively, so it must be finite and small enough to hold in memory. Grounding cost grows as the product of the type domain sizes.</li>
+      <li>Effects are deterministic by construction; the result is a transition system, not a probabilistic model.</li>
+      <li>The browser demo stops exploring at 6,000 states and draws at most 90 of them. A capped build is still a closed graph — a prefix of the reachable state space — but run the Python tool for anything larger.</li>
+    </ul>
+  </div>
+</section>
+
+<footer class="site">
+  <div class="wrap">
+    <p>
+      <a href="https://github.com/leelening/pddl_parser">github.com/leelening/pddl_parser</a>
+      &middot; MIT licensed
+      &middot; Structure follows <a href="https://github.com/pucrs-automated-planning/pddl-parser">pucrs-automated-planning/pddl-parser</a>
+    </p>
+    <p>Built by <a href="https://github.com/leelening">Lening Li</a>. The demo runs entirely in your browser.</p>
+  </div>
+</footer>
+
+<script src="assets/pddl.js"></script>
+<script src="assets/examples.js"></script>
+<script src="assets/demo.js"></script>
+</body>
+</html>

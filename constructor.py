@@ -5,8 +5,25 @@ from PDDL import PDDL_Parser
 import pickle
 
 
-def convert(list):
-    return tuple(i[0] for i in list)
+def label(act):
+    # A ground action's identity is its name *and* its arguments: groundify
+    # gives every grounding the same .name, so keying transitions by name
+    # alone silently merged distinct groundings.
+    if not len(act.parameters):
+        return act.name
+    return act.name + '(' + ','.join(str(a) for a in act.parameters) + ')'
+
+
+def convert(state):
+    # Canonical, hashable key for a state.  Sorting matters: `apply` appends
+    # facts in action-application order, so the same set of facts reached by
+    # two different action orders must not count as two distinct states.
+    # Deduplicating matters too: `apply` never emits a repeated fact, so a
+    # repeated fact in `:init` would leave the initial state under a key no
+    # action could ever produce again.
+    # The whole predicate is kept -- keeping only i[0] collapsed every
+    # grounding of a predicate (e.g. (at ana p1) and (at bob p2)) into one key.
+    return tuple(sorted(set(tuple(i) for i in state)))
 
 
 class Constructor:
@@ -23,30 +40,36 @@ class Constructor:
         # Parsed data
         state = parser.state
         initial_state = convert(state)
-        goal_pos = parser.positive_goals
-        goal_not = parser.negative_goals
-        # Do nothing
-        if self.applicable(state, goal_pos, goal_not):
-            return []
+        # The goal is not a search cutoff.  The result describes every state
+        # reachable from the initial one, and a goal state reached later in
+        # the search is expanded like any other, so returning early when the
+        # goal already holds threw away the rest of the state space (and, by
+        # returning [], made the two-value unpacking every caller does raise).
         # Grounding process
         ground_actions = []
         for action in parser.actions:
             for act in action.groundify(parser.objects):
                 ground_actions.append(act)
         # Search
-        visited = [state]
+        visited = {initial_state}
         need_visit = [state]
         transitions = dict()
         while need_visit:
             state = need_visit.pop(0)
-            transitions[convert(state)] = dict()
+            key = convert(state)
+            transitions[key] = dict()
             for act in ground_actions:
                 if self.applicable(state, act.positive_preconditions, act.negative_preconditions):
                     new_state = self.apply(state, act.add_effects, act.del_effects)
-                    if new_state not in visited:
-                        visited.append(new_state)
+                    new_key = convert(new_state)
+                    # Record the edge for every applicable action, not only for
+                    # actions that discover a previously unseen state -- doing
+                    # the latter yields a spanning tree, not the transition
+                    # system.
+                    transitions[key][label(act)] = new_key
+                    if new_key not in visited:
+                        visited.add(new_key)
                         need_visit.append(new_state)
-                        transitions[convert(state)][act.name] = convert(new_state)
         return [transitions, initial_state]
 
     #-----------------------------------------------

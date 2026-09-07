@@ -14,29 +14,30 @@ class PDDL_Parser:
 
     def scan_tokens(self, filename):
         with open(filename,'r') as f:
-            # Remove single line comments
-            str = re.sub(r';.*$', '', f.read(), flags=re.MULTILINE).lower()
+            # Remove single line comments.  `str` and `list` would shadow the
+            # builtins of the same name.
+            text = re.sub(r';.*$', '', f.read(), flags=re.MULTILINE).lower()
         # Tokenize
         stack = []
-        list = []
-        for t in re.findall(r'[()]|[^\s()]+', str):
+        current = []
+        for t in re.findall(r'[()]|[^\s()]+', text):
             if t == '(':
-                stack.append(list)
-                list = []
+                stack.append(current)
+                current = []
             elif t == ')':
                 if stack:
-                    l = list
-                    list = stack.pop()
-                    list.append(l)
+                    nested = current
+                    current = stack.pop()
+                    current.append(nested)
                 else:
                     raise Exception('Missing open parentheses')
             else:
-                list.append(t)
+                current.append(t)
         if stack:
             raise Exception('Missing close parentheses')
-        if len(list) != 1:
+        if len(current) != 1:
             raise Exception('Malformed expression')
-        return list[0]
+        return current[0]
 
     #-----------------------------------------------
     # Parse domain
@@ -143,6 +144,10 @@ class PDDL_Parser:
     #-----------------------------------------------
 
     def parse_problem(self, problem_filename):
+        # The problem's :domain is checked against self.domain_name, which
+        # only exists once the domain has been parsed.
+        if not hasattr(self, 'domain_name'):
+            raise Exception('parse_domain must be called before parse_problem')
         tokens = self.scan_tokens(problem_filename)
         if type(tokens) is list and tokens.pop(0) == 'define':
             self.problem_name = 'unknown'
@@ -166,14 +171,15 @@ class PDDL_Parser:
                     while group:
                         if group[0] == '-':
                             group.pop(0)
-                            self.objects[group.pop(0)] = object_list
+                            # A type may be declared more than once, as in
+                            # `:objects a - pos b - pos`: extend rather than
+                            # overwrite the objects already recorded for it.
+                            self.objects.setdefault(group.pop(0), []).extend(object_list)
                             object_list = []
                         else:
                             object_list.append(group.pop(0))
                     if object_list:
-                        if not 'object' in self.objects:
-                            self.objects['object'] = []
-                        self.objects['object'] += object_list
+                        self.objects.setdefault('object', []).extend(object_list)
                 elif t == ':init':
                     group.pop(0)
                     self.state = group
@@ -225,4 +231,4 @@ if __name__ == '__main__':
     print('Objects: ' + str(parser.objects))
     print('State: ' + str(parser.state))
     print('Positive goals: ' + str(parser.positive_goals))
-    print('Negative goals: ' + str(parser.negative_goals))
+    print('Negative goals: ' + str(parser.negative_goals))

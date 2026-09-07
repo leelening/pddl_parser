@@ -21,8 +21,12 @@ class Action:
         '\n  add_effects: ' + str(self.add_effects) + \
         '\n  del_effects: ' + str(self.del_effects) + '\n'
 
-    def __eq__(self, other): 
+    def __eq__(self, other):
         return self.__dict__ == other.__dict__
+
+    # Defining __eq__ without __hash__ makes the class unhashable on Python 3.
+    def __hash__(self):
+        return hash(self.name)
 
     def groundify(self, objects):
         if not self.parameters:
@@ -30,8 +34,13 @@ class Action:
             return
         type_map = []
         variables = []
-        for var, type in self.parameters:
-            type_map.append(objects[type])
+        # `type` would shadow the builtin.
+        for var, var_type in self.parameters:
+            if var_type not in objects:
+                raise Exception('Action ' + self.name + ' declares parameter ' + var +
+                    ' of type ' + var_type + ', but the problem file defines no objects'
+                    ' of that type')
+            type_map.append(objects[var_type])
             variables.append(var)
         for assignment in itertools.product(*type_map):
             positive_preconditions = self.replace(self.positive_preconditions, variables, assignment)
@@ -41,16 +50,11 @@ class Action:
             yield Action(self.name, assignment, positive_preconditions, negative_preconditions, add_effects, del_effects)
 
     def replace(self, group, variables, assignment):
-        g = []
-        for pred in group:
-            pred = list(pred)
-            iv = 0
-            for v in variables:
-                while v in pred:
-                    pred[pred.index(v)] = assignment[iv]
-                iv += 1
-            g.append(pred)
-        return g
+        # Substitute every variable at once. Replacing them one at a time
+        # re-scans tokens already substituted, so a value that happens to
+        # match a later variable name gets replaced a second time.
+        substitution = dict(zip(variables, assignment))
+        return [[substitution.get(token, token) for token in pred] for pred in group]
 
 if __name__ == '__main__':
     a = Action('move', [['?ag', 'agent'], ['?from', 'pos'], ['?to', 'pos']],
@@ -66,4 +70,4 @@ if __name__ == '__main__':
         'pos': ['p1','p2']
     }
     for act in a.groundify(objects):
-        print(act)
+        print(act)

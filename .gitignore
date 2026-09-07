@@ -1,3 +1,6 @@
 *.pyc
+__pycache__/
+.pytest_cache/
 *.pickle
 .vscode
+node_modules/
