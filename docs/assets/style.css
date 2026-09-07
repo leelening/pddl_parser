@@ -89,6 +89,13 @@ h1 {
 .btn:hover { border-color: var(--text-faint); text-decoration: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 .btn.primary:hover { filter: brightness(1.07); }
+/* Secondary to the primary CTA: the heart carries the meaning, not a fill. */
+.btn.sponsor svg { color: #bf3989; }
+.btn.sponsor:hover { border-color: #bf3989; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .btn.sponsor svg { color: #db61a2; }
+  :root:not([data-theme="light"]) .btn.sponsor:hover { border-color: #db61a2; }
+}
 
 nav.toc {
   position: sticky; top: 0; z-index: 20;
